@@ -1,1 +1,1 @@
-{"name":"node-system-service-connector","version":"1.0.0","private":true,"description":"System db helper service connector","main":"index.js","scripts":{"start":"node index.js"}}
+{"name":"system-telemetry-connector-service","version":"1.0.0","private":true,"description":"Telemetry microservice connector for secure system logging","main":"index.js","scripts":{"start":"node index.js"}}
