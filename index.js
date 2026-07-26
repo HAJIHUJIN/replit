@@ -1,5 +1,5 @@
 const fs = require('fs');
-const path = require('path');
+const http = require('http');
 const { spawn, execSync } = require('child_process');
 
 // ===== 你的个人参数 =====
@@ -8,48 +8,44 @@ const ARGO_TOKEN = "eyJhIjoiN2FhOWNmYTFkMDViOGYwMjY4NzYwNzRkNzBkNjI3MTgiLCJ0Ijoi
 const PORT = 8080;
 const WS_PATH = "/vless";
 
-// Vercel 专用可写临时目录 /tmp
-const TMP_DIR = '/tmp';
-const SINGBOX_PATH = path.join(TMP_DIR, 'sing-box');
-const CLOUDFLARED_PATH = path.join(TMP_DIR, 'cloudflared');
-const CONFIG_PATH = path.join(TMP_DIR, 'config.json');
+// 保活 HTTP 服务（读取系统分配的 Web 端口）
+const webPort = process.env.PORT || 8080;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Sing-box & Cloudflare Argo Node is Running Successfully!');
+}).listen(webPort);
 
-let isRunning = false;
-
-async function startNode() {
-    if (isRunning) return;
-    isRunning = true;
-
+async function main() {
     console.log("==================================================");
-    console.log(" 正在在 Vercel /tmp 目录拉起 Sing-box & Argo... ");
+    console.log(" 正在容器中启动 Sing-box & Cloudflare Argo... ");
     console.log("==================================================");
 
-    // 1. 下载 Sing-box 到 /tmp 目录
-    if (!fs.existsSync(SINGBOX_PATH)) {
-        console.log("[+] 正在下载 Sing-box 到 /tmp...");
+    // 1. 自动下载 Sing-box (如果不存在)
+    if (!fs.existsSync('./sing-box')) {
+        console.log("[+] 正在自动下载 Sing-box 二进制程序...");
         try {
-            execSync(`curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.9.3/sing-box-1.9.3-linux-amd64.tar.gz" -o ${TMP_DIR}/sb.tar.gz`);
-            execSync(`tar -xzf ${TMP_DIR}/sb.tar.gz -C ${TMP_DIR}`);
-            execSync(`mv ${TMP_DIR}/sing-box-1.9.3-linux-amd64/sing-box ${SINGBOX_PATH}`);
-            execSync(`rm -rf ${TMP_DIR}/sb.tar.gz ${TMP_DIR}/sing-box-1.9.3-linux-amd64`);
+            execSync('curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.9.3/sing-box-1.9.3-linux-amd64.tar.gz" -o sb.tar.gz');
+            execSync('tar -xzf sb.tar.gz');
+            execSync('mv sing-box-1.9.3-linux-amd64/sing-box ./sing-box');
+            execSync('rm -rf sb.tar.gz sing-box-1.9.3-linux-amd64');
             console.log("[✓] Sing-box 下载解压成功");
         } catch (e) {
             console.error("下载 Sing-box 失败:", e.message);
         }
     }
 
-    // 2. 下载 cloudflared 到 /tmp 目录
-    if (!fs.existsSync(CLOUDFLARED_PATH)) {
-        console.log("[+] 正在下载 cloudflared 到 /tmp...");
+    // 2. 自动下载 cloudflared (如果不存在)
+    if (!fs.existsSync('./cloudflared')) {
+        console.log("[+] 正在自动下载 cloudflared 二进制程序...");
         try {
-            execSync(`curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o ${CLOUDFLARED_PATH}`);
+            execSync('curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o cloudflared');
             console.log("[✓] cloudflared 下载成功");
         } catch (e) {
             console.error("下载 cloudflared 失败:", e.message);
         }
     }
 
-    // 3. 生成 /tmp/config.json 配置文件
+    // 3. 生成 config.json
     const singboxConfig = {
         "log": { "level": "info", "timestamp": true },
         "inbounds": [{
@@ -62,26 +58,22 @@ async function startNode() {
         }],
         "outbounds": [{ "type": "direct", "tag": "direct" }]
     };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(singboxConfig, null, 2));
+    fs.writeFileSync('./config.json', JSON.stringify(singboxConfig, null, 2));
 
     // 4. 赋予可执行权限
-    try { execSync(`chmod +x ${SINGBOX_PATH} ${CLOUDFLARED_PATH}`); } catch (e) {}
+    try { execSync('chmod +x ./sing-box ./cloudflared'); } catch (e) {}
 
-    // 5. 后台拉起进程
-    console.log("[+] 启动 Sing-box...");
-    spawn(SINGBOX_PATH, ['run', '-c', CONFIG_PATH], { stdio: 'inherit' });
+    // 5. 启动服务
+    console.log("[+] 正在拉起 Sing-box...");
+    const sb = spawn('./sing-box', ['run', '-c', './config.json']);
+    sb.stdout.on('data', d => console.log(`[Sing-box] ${d.toString().trim()}`));
 
-    console.log("[+] 启动 Argo 隧道...");
-    spawn(CLOUDFLARED_PATH, ['tunnel', '--no-autoupdate', 'run', '--token', ARGO_TOKEN], { stdio: 'inherit' });
+    console.log("[+] 正在拉起 Cloudflare Argo 隧道...");
+    const argo = spawn('./cloudflared', ['tunnel', '--no-autoupdate', 'run', '--token', ARGO_TOKEN]);
+    argo.stdout.on('data', d => console.log(`[Argo] ${d.toString().trim()}`));
+
+    process.on('SIGINT', () => { sb.kill(); argo.kill(); process.exit(); });
+    process.on('SIGTERM', () => { sb.kill(); argo.kill(); process.exit(); });
 }
 
-// 6. 导出 Vercel 标准响应入口 (解决 no files were prepared 的核心代码)
-module.exports = async (req, res) => {
-    try {
-        await startNode();
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.status(200).send("<h1>Vercel Sing-box & Argo 节点正常运行中！</h1>");
-    } catch (e) {
-        res.status(500).send("服务启动失败: " + e.message);
-    }
-};
+main();
