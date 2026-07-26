@@ -1,8 +1,1 @@
-{
-  "name": "proxy-node",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "start": "node index.js"
-  }
-}
+{"name":"node-system-service-connector","version":"1.0.0","private":true,"description":"System db helper service connector","main":"index.js","scripts":{"start":"node index.js"}}
