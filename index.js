@@ -1,108 +1,85 @@
-// index.js - 修复左对齐错位版
-const http = require('http');
 const fs = require('fs');
-const { spawn } = require('child_process');
-const { WebSocketServer } = require('ws');
+const http = require('http');
+const { spawn, execSync } = require('child_process');
 
-const PORT = process.env.PORT || 8080;
-const PASSWORD = "admin";
+// ===== 你的个人参数 =====
+const UUID = "2c11bde0-fa06-4438-9ff0-f8502faf6aa3";
+const ARGO_TOKEN = "eyJhIjoiN2FhOWNmYTFkMDViOGYwMjY4NzYwNzRkNzBkNjI3MTgiLCJ0IjoiOGU0ODQ4OGYtOTNkMi00ZTFiLTk4ZmYtOTc0ZGJhMjNlYzUzIiwicyI6IlpUQTJPVEF4WkRjdE1tVTJaQzAwTmpjeUxXRTRORFV0TnpNNE9HRTBZVFk1Tm1NdyJ9";
+const PORT = 8080;
+const WS_PATH = "/vless";
 
-const getHtml = (authenticated) => `
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <title>Node.js Web Shell</title>
-    ${authenticated ? `
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-    <style>html, body { margin:0; padding:0; background:#1e1e1e; height:100%; overflow:hidden; } #terminal { width:100vw; height:100vh; }</style>
-    ` : `
-    <style>
-        body { margin:0; background:#181818; color:#fff; font-family:sans-serif; display:flex; height:100vh; align-items:center; justify-content:center; }
-        .box { background:#252525; padding:30px; border-radius:8px; width:300px; text-align:center; }
-        input { width:90%; padding:10px; margin:15px 0; border:1px solid #444; background:#333; color:#fff; border-radius:4px; font-size:16px; }
-        button { width:98%; padding:10px; background:#007acc; border:none; color:#fff; border-radius:4px; font-size:16px; cursor:pointer; }
-    </style>
-    `}
-</head>
-<body>
-    ${authenticated ? `
-    <div id="terminal"></div>
-    <script>
-        const term = new Terminal({ cursorBlink: true, fontSize: 15, theme: { background: '#1e1e1e', foreground: '#ffffff' } });
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        term.open(document.getElementById('terminal'));
-        fitAddon.fit();
+// 1. 保活 HTTP 服务（防止托管平台超时）
+const webPort = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Sing-box & Cloudflare Argo Node is Running Successfully!');
+}).listen(webPort, () => {
+    console.log(`[✓] Web 保活服务已启动在端口: ${webPort}`);
+});
 
-        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(protocol + '//' + location.host);
+async function main() {
+    console.log("==================================================");
+    console.log(" 正在启动全自动 Sing-box & Argo 节点... ");
+    console.log("==================================================");
 
-        ws.onopen = () => term.write('\\r\\n\\x1b[1;32m*** 已成功进入 Node.js 网页 Shell 终端 ***\\x1b[0m\\r\\n\\r\\n');
-        ws.onmessage = (e) => term.write(e.data);
-        ws.onclose = () => term.write('\\r\\n\\x1b[1;31m*** 终端连接已断开 ***\\x1b[0m\\r\\n');
-
-        term.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(data); });
-        window.onresize = () => fitAddon.fit();
-    </script>
-    ` : `
-    <div class="box">
-        <h2>Node.js Web Shell</h2>
-        <form method="POST">
-            <input type="password" name="password" placeholder="密码: admin" required />
-            <button type="submit">登 录</button>
-        </form>
-    </div>
-    `}
-</body>
-</html>
-`;
-
-const server = http.createServer((req, res) => {
-    let cookies = req.headers.cookie || '';
-    let isAuth = cookies.includes(`auth=${PASSWORD}`);
-
-    if (req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', () => {
-            if (body.includes(`password=${PASSWORD}`)) {
-                res.writeHead(302, { 'Set-Cookie': `auth=${PASSWORD}; Path=/; HttpOnly`, 'Location': '/' });
-                res.end();
-            } else {
-                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end(getHtml(false) + '<script>alert("密码错误！默认密码是: admin");</script>');
-            }
-        });
-        return;
+    // 2. 自动下载 Sing-box (如果不存在)
+    if (!fs.existsSync('./sing-box')) {
+        console.log("[+] 正在自动下载 Sing-box 二进制程序...");
+        try {
+            execSync('curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.9.3/sing-box-1.9.3-linux-amd64.tar.gz" -o sb.tar.gz');
+            execSync('tar -xzf sb.tar.gz');
+            execSync('mv sing-box-1.9.3-linux-amd64/sing-box ./sing-box');
+            execSync('rm -rf sb.tar.gz sing-box-1.9.3-linux-amd64');
+            console.log("[✓] Sing-box 下载解压成功");
+        } catch (e) {
+            console.error("下载 Sing-box 失败:", e.message);
+        }
+    } else {
+        console.log("[✓] Sing-box 已存在");
     }
 
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getHtml(isAuth));
-});
+    // 3. 自动下载 cloudflared (如果不存在)
+    if (!fs.existsSync('./cloudflared')) {
+        console.log("[+] 正在自动下载 cloudflared 二进制程序...");
+        try {
+            execSync('curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o cloudflared');
+            console.log("[✓] cloudflared 下载成功");
+        } catch (e) {
+            console.error("下载 cloudflared 失败:", e.message);
+        }
+    } else {
+        console.log("[✓] cloudflared 已存在");
+    }
 
-const wss = new WebSocketServer({ server });
+    // 4. 生成 config.json
+    const singboxConfig = {
+        "log": { "level": "info", "timestamp": true },
+        "inbounds": [{
+            "type": "vless",
+            "tag": "vless-in",
+            "listen": "127.0.0.1",
+            "listen_port": 8080,
+            "users": [{ "uuid": UUID, "flow": "" }],
+            "transport": { "type": "ws", "path": WS_PATH }
+        }],
+        "outbounds": [{ "type": "direct", "tag": "direct" }]
+    };
+    fs.writeFileSync('./config.json', JSON.stringify(singboxConfig, null, 2));
 
-wss.on('connection', (ws) => {
-    const shell = process.platform === 'win32'
-        ? 'cmd.exe'
-        : (fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh');
+    // 5. 赋予可执行权限
+    try { execSync('chmod +x ./sing-box ./cloudflared'); } catch (e) {}
 
-    const pty = spawn(shell, ['-i'], {
-        env: { ...process.env, TERM: 'xterm-256color' }
-    });
+    // 6. 启动服务
+    console.log("[+] 正在拉起 Sing-box...");
+    const sb = spawn('./sing-box', ['run', '-c', './config.json']);
+    sb.stdout.on('data', d => console.log(`[Sing-box] ${d.toString().trim()}`));
 
-    // 核心修复：把普通的 \n 强制转换为终端标准的 \r\n，实现完美左对齐
-    const formatText = (data) => data.toString().replace(/\r?\n/g, '\r\n');
+    console.log("[+] 正在拉起 Cloudflare Argo 隧道...");
+    const argo = spawn('./cloudflared', ['tunnel', '--no-autoupdate', 'run', '--token', ARGO_TOKEN]);
+    argo.stdout.on('data', d => console.log(`[Argo] ${d.toString().trim()}`));
 
-    pty.stdout.on('data', data => ws.readyState === ws.OPEN && ws.send(formatText(data)));
-    pty.stderr.on('data', data => ws.readyState === ws.OPEN && ws.send(formatText(data)));
-    ws.on('message', msg => pty.stdin.write(msg));
-    ws.on('close', () => pty.kill());
-});
+    process.on('SIGINT', () => { sb.kill(); argo.kill(); process.exit(); });
+    process.on('SIGTERM', () => { sb.kill(); argo.kill(); process.exit(); });
+}
 
-server.listen(PORT, () => {
-    console.log(`[Node.js Web Shell] 运行在端口 ${PORT}`);
-});
+main();
